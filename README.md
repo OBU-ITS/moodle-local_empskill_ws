@@ -1,5 +1,5 @@
-moodle-empskill-ws
-==================
+moodle-local_empskill-ws
+========================
 
 A Moodle plugin that provides a web service to enable the posting and retrieval of 'employability skill' blog entries and to report statistics.
 
