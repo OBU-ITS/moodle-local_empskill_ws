@@ -24,6 +24,7 @@
  */
  
 require_once($CFG->libdir . "/externallib.php");
+require_once($CFG->dirroot . "/course/lib.php");
 
 class local_empskill_ws_external extends external_api {
 
@@ -121,7 +122,7 @@ class local_empskill_ws_external extends external_api {
 			'tag_description' => strip_tags($tag->description)
 		);
 	}
-
+	
 	public static function get_faculties_parameters() {
 		return new external_function_parameters(array());
 	}
@@ -153,7 +154,7 @@ class local_empskill_ws_external extends external_api {
 		require_once($CFG->dirroot . '/course/externallib.php');
 
 		$faculties = array();
-		$db_ret = get_categories();
+		$db_ret = self::get_categories(); // Course categories
 		foreach ($db_ret as $row) {
 			if ($row->parent == '122') { // Top-level PIP-linked course categories
 				if (strncmp($row->name, 'Faculty', 7) == 0) {
@@ -308,7 +309,7 @@ class local_empskill_ws_external extends external_api {
 
 		$courses = array();
 		$stats = array();
-		$db_category_ret = get_categories(); // Course categories
+		$db_category_ret = self::get_categories(); // Course categories
 		foreach ($db_category_ret as $category) {
 			if ($category->parent == $params['faculty_id']) {
 				$db_course_ret = self::get_current_courses($category->id);
@@ -426,223 +427,6 @@ class local_empskill_ws_external extends external_api {
 		}
 		
 		return $skills;
-	}
-
-	private static function get_stats_parameters() {
-		return new external_function_parameters(
-			array(
-				'stats_type' => new external_value(PARAM_TEXT, 'Type of stats required'),
-				'faculty_id' => new external_value(PARAM_INT, 'ID of the faculty required'),
-				'category_id' => new external_value(PARAM_INT, 'ID of the skill category required'),
-				'course_id' => new external_value(PARAM_INT, 'ID of the course required')
-			)
-		);
-	}
-
-	private static function get_stats_returns() {
-		return new external_multiple_structure(
-			new external_single_structure(
-				array(
-					'stat_name' => new external_value(PARAM_TEXT, 'Statistic name'),
-					'stat_bloggers' => new external_value(PARAM_INT, 'Bloggers (students with posts)'),
-					'stat_students' => new external_value(PARAM_INT, 'Total students (zero for individual skills)'),
-					'stat_associations' => new external_value(PARAM_INT, 'Posts with course associations'),
-					'stat_posts' => new external_value(PARAM_INT, 'Total posts')
-				)
-			)
-		);
-	}
-
-	private static function get_stats($stats_type, $faculty_id, $category_id, $course_id) {
-		global $CFG, $DB;
-
-		$params = self::validate_parameters(
-			self::get_stats_parameters(), array(
-				'stats_type' => $stats_type,
-				'faculty_id' => $faculty_id,
-				'category_id' => $category_id,
-				'course_id' => $course_id
-			)
-		);
-		
-		if (strlen($params['stats_type']) < 1) {
-			throw new invalid_parameter_exception('stats_type must be a non-empty string');
-		}
-
-		if ($params['faculty_id'] < 1) {
-			throw new invalid_parameter_exception('faculty_id must be a positive integer');
-		}
-
-		if ($params['category_id'] < 1) {
-			throw new invalid_parameter_exception('category_id must be a positive integer');
-		}
-
-		if ($params['course_id'] < 0) {
-			throw new invalid_parameter_exception('course_id must not be negative');
-		}
-
-		// Context validation
-		$context = context_system::instance();
-		self::validate_context($context);
-
-        // Capability checking
-		require_capability('moodle/blog:create', $context);
-		
-		require_once($CFG->dirroot . '/course/externallib.php');
-		
-		// Get a list of the required courses
-		$courses = array();
-		if ($params['course_id'] > 0) {
-			$courses[] = $params['course_id'];
-		} else {
-			$db_category_ret = get_categories(); // Course categories
-			foreach ($db_category_ret as $category) {
-				if ($category->parent == $params['faculty_id']) {
-					$db_course_ret = self::get_current_courses($category->id);
-					foreach ($db_course_ret as $course) {
-						$courses[] = $course['course_id'];
-					}
-				}
-			}
-		}
-		
-		// Get a list of all enrolled students for the courses
-		$student_ids = array();
-		$student_posts = array();
-		$student_role = $DB->get_record('role', array('shortname'=>'student'), 'id', MUST_EXIST);
-		foreach ($courses as $course_id) {
-			$context = context_course::instance($course_id);
-			$users = get_role_users($student_role->id, $context, false, 'u.id');
-			foreach ($users as $user) {
-				if (is_enrolled($context, $user->id)) {
-					if (!in_array($user->id, $student_ids, true)) {
-						$student_ids[] = $user->id;
-						$student_posts[] = 0;
-					}
-				}
-			}
-		}
-
-		// Get a list of this and the previous 11 month numbers
-		$month_numbers = array();
-		$month_stats = array();
-		$year = date('Y');
-		$month = date('n');
-		for ($index = 0; $index < 12; $index++) {
-			if ($month < 10) {
-				$month_numbers[] = $year . '0' . $month;
-			} else {
-				$month_numbers[] = $year . $month;
-			}
-			$month_stats[] = array(
-				'month_posts' => 0,
-				'month_associations' => 0
-			);
-			if ($month > 1) {
-				$month--;
-			} else {
-				$year--;
-				$month = 12;
-			}
-		}
-		
-		// Store the ID of each related tag (skill) in an array
-		$criteria = "tagid = '" . $params['category_id'] . "' AND itemtype = 'tag'";
-		$db_ret = $DB->get_records_select('tag_instance', $criteria, null, 'itemid');
-		$ids = array();
-		foreach ($db_ret as $row) {
-			$ids[] = $row->itemid;
-		}
-		
-		// Get the statistics
-		$skills = array();
-		$total_associations = 0;
-		$db_skills_ret = $DB->get_records_list('tag', 'id', $ids, 'name', 'id, rawname');
-		foreach ($db_skills_ret as $skill) {
-			$skill_bloggers = 0;
-			$skill_associations = 0;
-			$skill_posts = 0;
-			foreach ($student_ids as $index => $student_id) {
-				$sql = 'SELECT p.id, p.created '
-					. 'FROM {post} p '
-					. 'JOIN {tag_instance} ti ON ti.itemid = p.id '
-					. 'WHERE p.module = "blog" AND p.userid = ? AND ti.itemtype = "post" AND ti.tagid = ?';
-				$entries = $DB->get_records_sql($sql, array($student_id, $skill->id));
-				if (count($entries)) {
-					$skill_bloggers++;
-					$student_posts[$index] += count($entries);
-					$skill_posts += count($entries);
-					foreach ($entries as $entry) {
-						$month = date('Ym', $entry->created);
-						if (in_array($month, $month_numbers)) {
-							$month_stats[array_search($month, $month_numbers)]['month_posts']++;
-						}
-						if (!empty($CFG->useblogassociations)) {
-							$associations = $DB->get_records('blog_association', array('blogid' => $entry->id));
-							foreach ($associations as $association) {
-								$context = context::instance_by_id($association->contextid);
-								if ($context->contextlevel == CONTEXT_COURSE) {
-									if (($params['course_id'] == 0) || ($context->instanceid == $params['course_id'])) {
-										$skill_associations++;
-										$total_associations++;
-										if (in_array($month, $month_numbers)) {
-											$month_stats[array_search($month, $month_numbers)]['month_associations']++;
-										}
-									}
-								}
-							}
-						}
-					}
-				}
-			}
-			$skills[] = array(
-				'skill_name' => $skill->rawname,
-				'skill_bloggers' => $skill_bloggers,
-				'skill_associations' => $skill_associations,
-				'skill_posts' => $skill_posts
-			);
-		}
-		
-		$total_bloggers = 0;
-		$total_posts = 0;
-		foreach ($student_posts as $blog_posts) {
-			if ($blog_posts) {
-				$total_bloggers++;
-				$total_posts += $blog_posts;
-			}
-		}
-
-		$stats = array();
-		$stats[] = array (
-			'stat_name' => 'stat_totals',
-			'stat_bloggers' => $total_bloggers,
-			'stat_students' => count($student_ids),
-			'stat_associations' => $total_associations,
-			'stat_posts' => $total_posts
-		);
-		if ($params['stats_type'] == 'faculty') {
-			foreach ($month_numbers as $index => $month_number) {
-				$stats[] = array(
-					'stat_name' => $month_number,
-					'stat_bloggers' => 0,
-					'stat_students' => 0,
-					'stat_associations' => $month_stats[$index]['month_associations'],
-					'stat_posts' => $month_stats[$index]['month_posts']
-				);
-			}
-		} else if ($params['stats_type'] == 'skill') {
-			foreach ($skills as $skill) {
-				$stats[] = array(
-					'stat_name' => $skill['skill_name'],
-					'stat_bloggers' => $skill['skill_bloggers'],
-					'stat_students' => 0,
-					'stat_associations' => $skill['skill_associations'],
-					'stat_posts' => $skill['skill_posts']
-				);
-			}
-		}
-		
-		return $stats;
 	}
 
 	public static function get_skill_categories_parameters() {
@@ -1251,5 +1035,242 @@ class local_empskill_ws_external extends external_api {
 		$entry->delete();
 
 		return;
+	}
+
+	private static function get_categories() { // Course categories
+		global $DB;
+
+		$categories = array();
+
+		list($ccselect, $ccjoin) = context_instance_preload_sql('cc.id', CONTEXT_COURSECAT, 'ctx');
+		$sql = "SELECT cc.* $ccselect FROM {course_categories} cc $ccjoin ORDER BY cc.sortorder ASC";
+		$rs = $DB->get_recordset_sql($sql, array());
+		foreach($rs as $cat) {
+			context_helper::preload_from_record($cat);
+			$catcontext = context_coursecat::instance($cat->id);
+			if ($cat->visible || has_capability('moodle/category:viewhiddencategories', $catcontext)) {
+				$categories[$cat->id] = $cat;
+			}
+		}
+		$rs->close();
+		
+		return $categories;
+	}
+
+	private static function get_stats_parameters() {
+		return new external_function_parameters(
+			array(
+				'stats_type' => new external_value(PARAM_TEXT, 'Type of stats required'),
+				'faculty_id' => new external_value(PARAM_INT, 'ID of the faculty required'),
+				'category_id' => new external_value(PARAM_INT, 'ID of the skill category required'),
+				'course_id' => new external_value(PARAM_INT, 'ID of the course required')
+			)
+		);
+	}
+
+	private static function get_stats_returns() {
+		return new external_multiple_structure(
+			new external_single_structure(
+				array(
+					'stat_name' => new external_value(PARAM_TEXT, 'Statistic name'),
+					'stat_bloggers' => new external_value(PARAM_INT, 'Bloggers (students with posts)'),
+					'stat_students' => new external_value(PARAM_INT, 'Total students (zero for individual skills)'),
+					'stat_associations' => new external_value(PARAM_INT, 'Posts with course associations'),
+					'stat_posts' => new external_value(PARAM_INT, 'Total posts')
+				)
+			)
+		);
+	}
+
+	private static function get_stats($stats_type, $faculty_id, $category_id, $course_id) {
+		global $CFG, $DB;
+
+		$params = self::validate_parameters(
+			self::get_stats_parameters(), array(
+				'stats_type' => $stats_type,
+				'faculty_id' => $faculty_id,
+				'category_id' => $category_id,
+				'course_id' => $course_id
+			)
+		);
+		
+		if (strlen($params['stats_type']) < 1) {
+			throw new invalid_parameter_exception('stats_type must be a non-empty string');
+		}
+
+		if ($params['faculty_id'] < 1) {
+			throw new invalid_parameter_exception('faculty_id must be a positive integer');
+		}
+
+		if ($params['category_id'] < 1) {
+			throw new invalid_parameter_exception('category_id must be a positive integer');
+		}
+
+		if ($params['course_id'] < 0) {
+			throw new invalid_parameter_exception('course_id must not be negative');
+		}
+
+		// Context validation
+		$context = context_system::instance();
+		self::validate_context($context);
+
+        // Capability checking
+		require_capability('moodle/blog:create', $context);
+		
+		require_once($CFG->dirroot . '/course/externallib.php');
+		
+		// Get a list of the required courses
+		$courses = array();
+		if ($params['course_id'] > 0) {
+			$courses[] = $params['course_id'];
+		} else {
+			$db_category_ret = self::get_categories(); // Course categories
+			foreach ($db_category_ret as $category) {
+				if ($category->parent == $params['faculty_id']) {
+					$db_course_ret = self::get_current_courses($category->id);
+					foreach ($db_course_ret as $course) {
+						$courses[] = $course['course_id'];
+					}
+				}
+			}
+		}
+		
+		// Get a list of all enrolled students for the courses
+		$student_ids = array();
+		$student_posts = array();
+		$student_role = $DB->get_record('role', array('shortname'=>'student'), 'id', MUST_EXIST);
+		foreach ($courses as $course_id) {
+			$context = context_course::instance($course_id);
+			$users = get_role_users($student_role->id, $context, false, 'u.id');
+			foreach ($users as $user) {
+				if (is_enrolled($context, $user->id)) {
+					if (!in_array($user->id, $student_ids, true)) {
+						$student_ids[] = $user->id;
+						$student_posts[] = 0;
+					}
+				}
+			}
+		}
+
+		// Get a list of this and the previous 11 month numbers
+		$month_numbers = array();
+		$month_stats = array();
+		$year = date('Y');
+		$month = date('n');
+		for ($index = 0; $index < 12; $index++) {
+			if ($month < 10) {
+				$month_numbers[] = $year . '0' . $month;
+			} else {
+				$month_numbers[] = $year . $month;
+			}
+			$month_stats[] = array(
+				'month_posts' => 0,
+				'month_associations' => 0
+			);
+			if ($month > 1) {
+				$month--;
+			} else {
+				$year--;
+				$month = 12;
+			}
+		}
+		
+		// Store the ID of each related tag (skill) in an array
+		$criteria = "tagid = '" . $params['category_id'] . "' AND itemtype = 'tag'";
+		$db_ret = $DB->get_records_select('tag_instance', $criteria, null, 'itemid');
+		$ids = array();
+		foreach ($db_ret as $row) {
+			$ids[] = $row->itemid;
+		}
+		
+		// Get the statistics
+		$skills = array();
+		$total_associations = 0;
+		$db_skills_ret = $DB->get_records_list('tag', 'id', $ids, 'name', 'id, rawname');
+		foreach ($db_skills_ret as $skill) {
+			$skill_bloggers = 0;
+			$skill_associations = 0;
+			$skill_posts = 0;
+			foreach ($student_ids as $index => $student_id) {
+				$sql = 'SELECT p.id, p.created '
+					. 'FROM {post} p '
+					. 'JOIN {tag_instance} ti ON ti.itemid = p.id '
+					. 'WHERE p.module = "blog" AND p.userid = ? AND ti.itemtype = "post" AND ti.tagid = ?';
+				$entries = $DB->get_records_sql($sql, array($student_id, $skill->id));
+				if (count($entries)) {
+					$skill_bloggers++;
+					$student_posts[$index] += count($entries);
+					$skill_posts += count($entries);
+					foreach ($entries as $entry) {
+						$month = date('Ym', $entry->created);
+						if (in_array($month, $month_numbers)) {
+							$month_stats[array_search($month, $month_numbers)]['month_posts']++;
+						}
+						if (!empty($CFG->useblogassociations)) {
+							$associations = $DB->get_records('blog_association', array('blogid' => $entry->id));
+							foreach ($associations as $association) {
+								$context = context::instance_by_id($association->contextid);
+								if ($context->contextlevel == CONTEXT_COURSE) {
+									if (($params['course_id'] == 0) || ($context->instanceid == $params['course_id'])) {
+										$skill_associations++;
+										$total_associations++;
+										if (in_array($month, $month_numbers)) {
+											$month_stats[array_search($month, $month_numbers)]['month_associations']++;
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+			$skills[] = array(
+				'skill_name' => $skill->rawname,
+				'skill_bloggers' => $skill_bloggers,
+				'skill_associations' => $skill_associations,
+				'skill_posts' => $skill_posts
+			);
+		}
+		
+		$total_bloggers = 0;
+		$total_posts = 0;
+		foreach ($student_posts as $blog_posts) {
+			if ($blog_posts) {
+				$total_bloggers++;
+				$total_posts += $blog_posts;
+			}
+		}
+
+		$stats = array();
+		$stats[] = array (
+			'stat_name' => 'stat_totals',
+			'stat_bloggers' => $total_bloggers,
+			'stat_students' => count($student_ids),
+			'stat_associations' => $total_associations,
+			'stat_posts' => $total_posts
+		);
+		if ($params['stats_type'] == 'faculty') {
+			foreach ($month_numbers as $index => $month_number) {
+				$stats[] = array(
+					'stat_name' => $month_number,
+					'stat_bloggers' => 0,
+					'stat_students' => 0,
+					'stat_associations' => $month_stats[$index]['month_associations'],
+					'stat_posts' => $month_stats[$index]['month_posts']
+				);
+			}
+		} else if ($params['stats_type'] == 'skill') {
+			foreach ($skills as $skill) {
+				$stats[] = array(
+					'stat_name' => $skill['skill_name'],
+					'stat_bloggers' => $skill['skill_bloggers'],
+					'stat_students' => 0,
+					'stat_associations' => $skill['skill_associations'],
+					'stat_posts' => $skill['skill_posts']
+				);
+			}
+		}
+		
+		return $stats;
 	}
 }
