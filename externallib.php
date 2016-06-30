@@ -149,25 +149,22 @@ class local_empskill_ws_external extends external_api {
 		require_capability('moodle/blog:create', $context);
 
 		// Get course_viewer role
-		$course_viewer_role = $DB->get_record('role', array('shortname'=>'viewer'), 'id', MUST_EXIST);
+		$course_viewer_role = $DB->get_record('role', array('shortname' => 'viewer'), 'id', MUST_EXIST);
 
 		require_once($CFG->dirroot . '/course/externallib.php');
 
 		$faculties = array();
-		$db_ret = self::get_categories(); // Course categories
-		foreach ($db_ret as $row) {
-			if ($row->parent == '122') { // Top-level PIP-linked course categories
-				if (strncmp($row->name, 'Faculty', 7) == 0) {
-					// Check whether current user is a course viewer
-					$context = context_coursecat::instance($row->id);
-					$course_viewers = get_role_users($course_viewer_role->id, $context, false, 'u.id');
-					foreach ($course_viewers as $course_viewer) {
-						if ($course_viewer->id == $USER->id) {
-							$faculties[] = array(
-								'faculty_name' => $row->name,
-								'faculty_id' => $row->id
-							);
-						}
+		$db_ret = self::get_categories('122'); // Top-level PIP-linked course categories
+		foreach ($db_ret as $cat) {
+			if (strncmp($cat->name, 'Faculty', 7) == 0) {
+				// Check whether current user is a course viewer
+				$course_viewers = get_role_users($course_viewer_role->id, context_coursecat::instance($cat->id), false, 'u.id');
+				foreach ($course_viewers as $course_viewer) {
+					if ($course_viewer->id == $USER->id) {
+						$faculties[] = array(
+							'faculty_name' => $cat->name,
+							'faculty_id' => $cat->id
+						);
 					}
 				}
 			}
@@ -309,34 +306,32 @@ class local_empskill_ws_external extends external_api {
 
 		$courses = array();
 		$stats = array();
-		$db_category_ret = self::get_categories(); // Course categories
+		$db_category_ret = self::get_categories($params['faculty_id']); // Course categories for this faculty
 		foreach ($db_category_ret as $category) {
-			if ($category->parent == $params['faculty_id']) {
-				$db_course_ret = self::get_current_courses($category->id);
-				foreach ($db_course_ret as $course) {
-					$stats = self::get_stats('course', $params['faculty_id'], $params['category_id'], $course['course_id']);
-					$total = $stats[0];
-					$bloggers = $total['stat_bloggers'];
-					$students = $total['stat_students'];
-					$associations = $total['stat_associations'];
-					$posts = $total['stat_posts'];
+			$db_course_ret = self::get_current_courses($category->id);
+			foreach ($db_course_ret as $course) {
+				$stats = self::get_stats('course', $params['faculty_id'], $params['category_id'], $course['course_id']);
+				$total = $stats[0];
+				$bloggers = $total['stat_bloggers'];
+				$students = $total['stat_students'];
+				$associations = $total['stat_associations'];
+				$posts = $total['stat_posts'];
 					
-					// Convert the numbers to percentages
-					if ($students > 0) {
-						$bloggers = floor(($bloggers * 100) / $students + 0.5); // Course students that have, at some time, posted a skill entry
-					}
-					if ($posts > 0) {
-						$associations = floor(($associations * 100) / $posts + 0.5); // Skill entries posted by course students that they associated with the course
-					}
-					
-					$courses[] = array(
-						'course_id' => $course['course_id'],
-						'course_number' => $course['course_number'],
-						'course_name' => $course['course_name'],
-						'course_bloggers' => $bloggers,
-						'course_associations' => $associations
-					);
+				// Convert the numbers to percentages
+				if ($students > 0) {
+					$bloggers = floor(($bloggers * 100) / $students + 0.5); // Course students that have, at some time, posted a skill entry
 				}
+				if ($posts > 0) {
+					$associations = floor(($associations * 100) / $posts + 0.5); // Skill entries posted by course students that they associated with the course
+				}
+					
+				$courses[] = array(
+					'course_id' => $course['course_id'],
+					'course_number' => $course['course_number'],
+					'course_name' => $course['course_name'],
+					'course_bloggers' => $bloggers,
+					'course_associations' => $associations
+				);
 			}
 		}
 		
@@ -1037,24 +1032,10 @@ class local_empskill_ws_external extends external_api {
 		return;
 	}
 
-	private static function get_categories() { // Course categories
+	private static function get_categories($parent_id) { // Course categories with given parent
 		global $DB;
 
-		$categories = array();
-
-		list($ccselect, $ccjoin) = context_instance_preload_sql('cc.id', CONTEXT_COURSECAT, 'ctx');
-		$sql = "SELECT cc.* $ccselect FROM {course_categories} cc $ccjoin ORDER BY cc.sortorder ASC";
-		$rs = $DB->get_recordset_sql($sql, array());
-		foreach($rs as $cat) {
-			context_helper::preload_from_record($cat);
-			$catcontext = context_coursecat::instance($cat->id);
-			if ($cat->visible || has_capability('moodle/category:viewhiddencategories', $catcontext)) {
-				$categories[$cat->id] = $cat;
-			}
-		}
-		$rs->close();
-		
-		return $categories;
+		return $DB->get_records('course_categories', array('parent' => $parent_id, 'visible' => '1'), 'sortorder');	
 	}
 
 	private static function get_stats_parameters() {
@@ -1124,13 +1105,11 @@ class local_empskill_ws_external extends external_api {
 		if ($params['course_id'] > 0) {
 			$courses[] = $params['course_id'];
 		} else {
-			$db_category_ret = self::get_categories(); // Course categories
+			$db_category_ret = self::get_categories($params['faculty_id']); // Course categories for this faculty
 			foreach ($db_category_ret as $category) {
-				if ($category->parent == $params['faculty_id']) {
-					$db_course_ret = self::get_current_courses($category->id);
-					foreach ($db_course_ret as $course) {
-						$courses[] = $course['course_id'];
-					}
+				$db_course_ret = self::get_current_courses($category->id);
+				foreach ($db_course_ret as $course) {
+					$courses[] = $course['course_id'];
 				}
 			}
 		}
