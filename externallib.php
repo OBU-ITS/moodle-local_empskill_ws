@@ -515,7 +515,7 @@ class local_empskill_ws_external extends external_api {
 	}
 
 	public static function get_skills($class_id, $category_id) {
-		global $CFG, $DB;
+		global $CFG, $DB, $USER;
 
 		$params = self::validate_parameters(
 			self::get_skills_parameters(), array(
