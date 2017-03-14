@@ -840,7 +840,7 @@ class local_empskill_ws_external extends external_api {
 						$name = substr($row->fullname, ($split_pos + 2));
 					} else {
 						$number = '';
-						$name = $row_fullname;
+						$name = $row->fullname;
 					}
 				
 					$split_pos = strpos($name, ' (');
