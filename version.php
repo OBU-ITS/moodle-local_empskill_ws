@@ -24,8 +24,8 @@
  */
 
 $plugin->component = 'local_empskill_ws'; // Full name of the plugin (used for diagnostics): plugintype_pluginname
-$plugin->version  = 2017031400;   // The (date) version of this module + 2 extra digital for daily versions
+$plugin->version  = 2017081600;   // The (date) version of this module + 2 extra digital for daily versions
 $plugin->requires = 2012120300;   // Requires this Moodle version - at least 2.0
 $plugin->cron     = 0;
-$plugin->release = 'v1.0.7';
+$plugin->release = 'v1.0.8';
 $plugin->maturity = MATURITY_STABLE;

@@ -66,7 +66,7 @@ class local_empskill_ws_external extends external_api {
 		require_capability('moodle/blog:create', $context);
 
 		// Get the tag ID of the given tag
-		$criteria = "rawname = '" . $params['tag_rawname'] . "' AND tagtype = 'official'";
+		$criteria = "rawname = '" . $params['tag_rawname'] . "' AND isstandard = '1'";
 	    if (!($tag = $DB->get_record_select('tag', $criteria, null, 'id'))) {
 			throw new invalid_parameter_exception('tag not found');
 		}
