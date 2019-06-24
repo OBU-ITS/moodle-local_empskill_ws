@@ -811,29 +811,26 @@ class local_empskill_ws_external extends external_api {
 
 		if ($params['category_id'] == 0) {
 			// Get user's visible courses
-			$sql = 'SELECT c.id, c.fullname, c.shortname '
+			$sql = 'SELECT c.id, c.fullname, c.startdate, c.enddate '
 				. 'FROM {course} c '
 				. 'JOIN {enrol} e ON e.courseid = c.id '
 				. 'JOIN {user_enrolments} ue ON ue.enrolid = e.id '
-				. 'WHERE ue.userid = ? AND c.visible = 1 AND substr(c.shortname, 7, 1) = " " AND substr(c.shortname, 13, 1) = "-" AND length(c.shortname) >= 18';
+				. 'WHERE ue.userid = ? AND c.visible = 1 AND ((substr(c.shortname, 7, 1) = " " AND substr(c.shortname, 13, 1) = "-") OR substr(c.shortname, 9, 1) = " ")';
 			$db_ret = $DB->get_records_sql($sql, array($USER->id));
 		} else {
 			// Get all visible courses for the given category
-			$sql = 'SELECT c.id, c.fullname, c.shortname '
+			$sql = 'SELECT c.id, c.fullname, c.startdate, c.enddate '
 				. 'FROM {course} c '
-				. 'WHERE c.category = ? AND c.visible = 1 AND substr(c.shortname, 7, 1) = " " AND substr(c.shortname, 13, 1) = "-" AND length(c.shortname) >= 18';
+				. 'WHERE c.category = ? AND c.visible = 1 AND ((substr(c.shortname, 7, 1) = " " AND substr(c.shortname, 13, 1) = "-") OR substr(c.shortname, 9, 1) = " ")';
 			$db_ret = $DB->get_records_sql($sql, array($params['category_id']));
 		}
 
 		$courses = array();
-		$now = time();
+		$this_month = date('Ym');
 		foreach ($db_ret as $row) {
 			$context = context_course::instance($row->id);
 			if (($params['category_id'] != 0) || is_enrolled($context)) {
-				// Check that course is currently running
-				$course_start = strtotime('01 ' . substr($row->shortname, 7, 3) . ' ' . substr($row->shortname, 10, 2));
-				$course_end = strtotime('31 ' .	substr($row->shortname, 13, 3) . ' ' . substr($row->shortname, 16, 2));
-				if (($course_start <= $now) && ($course_end >= $now)) {
+				if (($this_month >= date('Ym', $row->startdate)) && ($this_month <= date('Ym', $row->enddate))) { // Current?
 					$split_pos = strpos($row->fullname, ': ');
 					if ($split_pos !== false) {
 						$number = substr($row->fullname, 0, $split_pos);
